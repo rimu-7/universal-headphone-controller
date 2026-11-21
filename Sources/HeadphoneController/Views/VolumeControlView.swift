@@ -7,18 +7,31 @@ public struct VolumeControlView: View {
         self.audioController = audioController
     }
     
+    private var volumeIcon: String {
+        if audioController.isMuted || audioController.currentVolume == 0 {
+            return "speaker.slash.fill"
+        } else if audioController.currentVolume < 0.33 {
+            return "speaker.wave.1.fill"
+        } else if audioController.currentVolume < 0.66 {
+            return "speaker.wave.2.fill"
+        } else {
+            return "speaker.wave.3.fill"
+        }
+    }
+    
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label("Mac Volume", systemImage: audioController.isMuted ? "speaker.slash.fill" : "speaker.wave.3.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                Label("Mac Volume", systemImage: volumeIcon)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
+                    .textCase(.uppercase)
                 
                 Spacer()
                 
-                Text("\(Int(audioController.currentVolume * 100))%")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundColor(.secondary)
+                Text("\(Int(round(audioController.currentVolume * 100)))%")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(audioController.isMuted ? .red : .primary)
             }
             
             HStack(spacing: 8) {
@@ -42,7 +55,7 @@ public struct VolumeControlView: View {
                 .accentColor(.accentColor)
                 
                 Image(systemName: "speaker.wave.3")
-                    .font(.system(size: 13))
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
         }

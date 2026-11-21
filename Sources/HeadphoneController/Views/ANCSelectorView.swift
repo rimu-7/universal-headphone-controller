@@ -18,7 +18,7 @@ public struct ANCSelectorView: View {
             modeButton(mode: .awareness, title: "Transparency", icon: "waveform")
         }
         .padding(3)
-        .background(Color.secondary.opacity(0.12))
+        .background(Color.secondary.opacity(0.10))
         .cornerRadius(8)
     }
     
@@ -34,15 +34,17 @@ public struct ANCSelectorView: View {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
+            .padding(.vertical, 6)
             .padding(.horizontal, 4)
             .background(isSelected ? Color.accentColor : Color.clear)
-            .foregroundColor(isSelected ? .white : (isEnabled ? .primary : .secondary))
+            .foregroundColor(isSelected ? .white : (isEnabled ? .primary : .secondary.opacity(0.6)))
             .cornerRadius(6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)

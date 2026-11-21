@@ -8,28 +8,80 @@ public class CoreAudioController: ObservableObject {
     @Published public var defaultOutputDeviceName: String = ""
     @Published public var defaultOutputDeviceID: AudioDeviceID = 0
     
-    private var volumeListenerBlock: AudioObjectPropertyListenerBlock?
-    private var muteListenerBlock: AudioObjectPropertyListenerBlock?
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
+    private var volumePollTimer: Timer?
     
     public init() {
         refresh()
         setupListeners()
+        startVolumePolling()
     }
     
     deinit {
+        volumePollTimer?.invalidate()
         removeListeners()
     }
     
     public func refresh() {
-        guard let deviceID = getDefaultOutputDeviceID() else { return }
-        self.defaultOutputDeviceID = deviceID
-        self.defaultOutputDeviceName = getDeviceName(deviceID) ?? "Unknown Device"
-        self.currentVolume = getDeviceVolume(deviceID) ?? 0.5
-        self.isMuted = getDeviceMute(deviceID)
+        // 1. Get default device info
+        if let deviceID = getDefaultOutputDeviceID() {
+            self.defaultOutputDeviceID = deviceID
+            self.defaultOutputDeviceName = getDeviceName(deviceID) ?? "Unknown Device"
+        }
+        
+        // 2. Read true system master output volume
+        let vol = getSystemVolume()
+        let mute = getSystemMute()
+        
+        DispatchQueue.main.async {
+            self.currentVolume = vol
+            self.isMuted = mute
+        }
     }
     
-    // MARK: - CoreAudio Helpers
+    // MARK: - System Volume Control (Smooth & Universal)
+    
+    public func getSystemVolume() -> Float {
+        let script = NSAppleScript(source: "output volume of (get volume settings)")
+        var error: NSDictionary?
+        if let res = script?.executeAndReturnError(&error) {
+            return Float(res.int32Value) / 100.0
+        }
+        return 0.5
+    }
+    
+    public func getSystemMute() -> Bool {
+        let script = NSAppleScript(source: "output muted of (get volume settings)")
+        var error: NSDictionary?
+        if let res = script?.executeAndReturnError(&error) {
+            return res.booleanValue
+        }
+        return false
+    }
+    
+    public func setVolume(_ volume: Float) {
+        let clamped = max(0.0, min(1.0, volume))
+        let intVal = Int(round(clamped * 100))
+        
+        // Optimistic UI update
+        self.currentVolume = clamped
+        
+        // Execute system volume change in background queue to avoid UI hitching
+        DispatchQueue.global(qos: .userInteractive).async {
+            let script = NSAppleScript(source: "set volume output volume \(intVal)")
+            script?.executeAndReturnError(nil)
+        }
+    }
+    
+    public func setMuted(_ muted: Bool) {
+        self.isMuted = muted
+        DispatchQueue.global(qos: .userInteractive).async {
+            let script = NSAppleScript(source: "set volume output muted \(muted ? "true" : "false")")
+            script?.executeAndReturnError(nil)
+        }
+    }
+    
+    // MARK: - Device Routing via CoreAudio
     
     public func getDefaultOutputDeviceID() -> AudioDeviceID? {
         var deviceID = AudioDeviceID(0)
@@ -75,90 +127,6 @@ public class CoreAudioController: ObservableObject {
         return cfStr as String
     }
     
-    public func getDeviceVolume(_ deviceID: AudioDeviceID) -> Float? {
-        var volume: Float32 = 0.0
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var dataSize = UInt32(MemoryLayout<Float32>.size)
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &volume
-        )
-        guard status == noErr else { return nil }
-        return volume
-    }
-    
-    public func getDeviceMute(_ deviceID: AudioDeviceID) -> Bool {
-        var mute: UInt32 = 0
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var dataSize = UInt32(MemoryLayout<UInt32>.size)
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &mute
-        )
-        guard status == noErr else { return false }
-        return mute != 0
-    }
-    
-    public func setVolume(_ volume: Float) {
-        guard let deviceID = getDefaultOutputDeviceID() else { return }
-        var targetVolume = max(0.0, min(1.0, volume))
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let dataSize = UInt32(MemoryLayout<Float32>.size)
-        AudioObjectSetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            dataSize,
-            &targetVolume
-        )
-        DispatchQueue.main.async {
-            self.currentVolume = targetVolume
-        }
-    }
-    
-    public func setMuted(_ muted: Bool) {
-        guard let deviceID = getDefaultOutputDeviceID() else { return }
-        var muteValue: UInt32 = muted ? 1 : 0
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let dataSize = UInt32(MemoryLayout<UInt32>.size)
-        AudioObjectSetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            dataSize,
-            &muteValue
-        )
-        DispatchQueue.main.async {
-            self.isMuted = muted
-        }
-    }
-    
     public func getAllOutputDevices() -> [(id: AudioDeviceID, name: String)] {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -189,7 +157,6 @@ public class CoreAudioController: ObservableObject {
         
         var result: [(id: AudioDeviceID, name: String)] = []
         for id in deviceIDs {
-            // Check if device has output streams
             var streamAddress = AudioObjectPropertyAddress(
                 mSelector: kAudioDevicePropertyStreams,
                 mScope: kAudioDevicePropertyScopeOutput,
@@ -208,7 +175,10 @@ public class CoreAudioController: ObservableObject {
     
     public func setDefaultOutputDevice(named targetName: String) -> Bool {
         let devices = getAllOutputDevices()
-        guard let match = devices.first(where: { $0.name.localizedCaseInsensitiveContains(targetName) }) else {
+        guard let match = devices.first(where: {
+            $0.name.localizedCaseInsensitiveContains(targetName) ||
+            targetName.localizedCaseInsensitiveContains($0.name)
+        }) else {
             return false
         }
         return setDefaultOutputDevice(id: match.id)
@@ -237,7 +207,7 @@ public class CoreAudioController: ObservableObject {
         return false
     }
     
-    // MARK: - CoreAudio Listeners
+    // MARK: - Listeners & Polling
     
     private func setupListeners() {
         var defaultDeviceAddress = AudioObjectPropertyAddress(
@@ -258,6 +228,23 @@ public class CoreAudioController: ObservableObject {
             DispatchQueue.main,
             defaultDeviceListenerBlock!
         )
+    }
+    
+    private func startVolumePolling() {
+        volumePollTimer?.invalidate()
+        volumePollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let vol = self.getSystemVolume()
+            let mute = self.getSystemMute()
+            DispatchQueue.main.async {
+                if abs(self.currentVolume - vol) > 0.02 {
+                    self.currentVolume = vol
+                }
+                if self.isMuted != mute {
+                    self.isMuted = mute
+                }
+            }
+        }
     }
     
     private func removeListeners() {

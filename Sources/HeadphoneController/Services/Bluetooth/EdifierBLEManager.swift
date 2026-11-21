@@ -122,6 +122,29 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
         }
     }
     
+    public func setEqualizer(_ preset: EqualizerPreset) {
+        let effectByte: UInt8
+        switch preset {
+        case .defaultPreset:
+            effectByte = 0x00 // Classic / Normal
+        case .voices:
+            effectByte = 0x01 // Pop / Vocal
+        case .treble:
+            effectByte = 0x02 // Classical / Treble
+        case .bass:
+            effectByte = 0x03 // Rock / Bass
+        }
+        let packet = EdifierPacket.buildSoundEffectRequest(effect: effectByte)
+        sendPacket(packet)
+        
+        if let dev = currentDevice {
+            dev.equalizerPreset = preset
+            DispatchQueue.main.async {
+                self.onDeviceUpdated?(dev)
+            }
+        }
+    }
+    
     public func queryBattery() {
         let packet = EdifierPacket.buildBatteryRequest()
         sendPacket(packet)

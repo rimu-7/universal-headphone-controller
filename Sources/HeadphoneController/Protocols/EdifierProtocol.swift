@@ -14,6 +14,7 @@ public struct EdifierPacket {
     public static let cmdPromptVolSet: UInt8 = 0x06
     public static let cmdGameModeGet: UInt8 = 0x08
     public static let cmdGameModeSet: UInt8 = 0x09
+    public static let cmdSoundEffectSet: UInt8 = 0xC4
     public static let cmdANCSet: UInt8 = 0xC1
     public static let cmdPlaybackState: UInt8 = 0xC3
     public static let cmdDeviceNameGet: UInt8 = 0xC9
@@ -97,6 +98,11 @@ public struct EdifierPacket {
     
     public static func buildGameModeSetRequest(enabled: Bool) -> Data {
         let pkt = EdifierPacket(command: cmdGameModeSet, data: Data([enabled ? 0x01 : 0x00]))
+        return pkt.toData()
+    }
+    
+    public static func buildSoundEffectRequest(effect: UInt8) -> Data {
+        let pkt = EdifierPacket(command: cmdSoundEffectSet, data: Data([effect]))
         return pkt.toData()
     }
     

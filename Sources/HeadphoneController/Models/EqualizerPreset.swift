@@ -15,9 +15,22 @@ public enum EqualizerPreset: Int, CaseIterable, Identifiable, Codable {
         case .bass:
             return "Bass Boost"
         case .treble:
-            return "Treble Boost"
+            return "Treble"
         case .voices:
-            return "Vocal Boost"
+            return "Voices"
+        }
+    }
+    
+    public var iconName: String {
+        switch self {
+        case .defaultPreset:
+            return "slider.vertical.3"
+        case .bass:
+            return "speaker.wave.3.fill"
+        case .treble:
+            return "waveform"
+        case .voices:
+            return "person.wave.2.fill"
         }
     }
 }

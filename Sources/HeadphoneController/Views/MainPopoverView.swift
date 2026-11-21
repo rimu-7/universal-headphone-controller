@@ -62,7 +62,7 @@ public struct MainPopoverView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     ForEach(manager.devices) { device in
                         DeviceRowView(device: device, manager: manager)
                     }
@@ -71,22 +71,27 @@ public struct MainPopoverView: View {
             
             Divider()
             
-            // System Volume Control
+            // Mac System Volume
             VolumeControlView(audioController: manager.audioController)
             
             // Footer
             HStack {
-                Text("Universal Controller • Native macOS")
+                Text("Native macOS • Universal Audio")
                     .font(.system(size: 9))
                     .foregroundColor(.secondary.opacity(0.7))
                 
                 Spacer()
                 
                 if let active = manager.activeDevice, active.isConnected {
-                    Text("Active: \(active.name)")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.accentColor)
-                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 5, height: 5)
+                        Text(active.name)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .padding(.horizontal, 4)

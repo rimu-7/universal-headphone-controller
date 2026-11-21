@@ -5,6 +5,7 @@ import Combine
 public class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var eventMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private let manager = HeadphoneManager.shared
     
@@ -28,8 +29,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 330, height: 420)
+        popover.contentSize = NSSize(width: 330, height: 480)
         popover.behavior = .transient
+        popover.animates = true
         popover.contentViewController = NSHostingController(rootView: MainPopoverView(manager: manager))
     }
     
@@ -59,11 +61,38 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         
         if popover.isShown {
-            popover.performClose(sender)
+            closePopover(sender)
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-            manager.refreshAll()
+            showPopover(button)
+        }
+    }
+    
+    private func showPopover(_ button: NSStatusBarButton) {
+        manager.refreshAll()
+        
+        // Ensure app is activated so popover coordinates align accurately
+        NSApp.activate(ignoringOtherApps: true)
+        
+        // Anchor directly to status bar button bottom edge
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        
+        if let window = popover.contentViewController?.view.window {
+            window.makeKey()
+        }
+        
+        // Dismiss automatically when clicking anywhere outside
+        if eventMonitor == nil {
+            eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                self?.closePopover(nil)
+            }
+        }
+    }
+    
+    private func closePopover(_ sender: AnyObject?) {
+        popover.performClose(sender)
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
         }
     }
 }

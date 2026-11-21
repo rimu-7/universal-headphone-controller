@@ -56,7 +56,8 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 id: deviceID,
                 name: deviceName,
                 brand: .huawei,
-                isConnected: false
+                isConnected: false,
+                equalizerPreset: .defaultPreset
             )
             currentDevice = model
             onDeviceUpdated?(model)
@@ -77,7 +78,7 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         self.targetDevice = device
         self.isConnecting = true
         
-        // Open RFCOMM channel on port 1 (standard for Huawei FreeLace Pro 2)
+        // Open RFCOMM channel on port 1
         let status = device.openRFCOMMChannelAsync(&rfcommChannel, withChannelID: 1, delegate: self)
         if status != kIOReturnSuccess {
             self.isConnecting = false
@@ -93,25 +94,32 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         let packet = HuaweiPacket.buildANCWriteRequest(mode: mode)
         sendData(packet)
         
-        // Optimistically update device state
         if let dev = currentDevice {
             dev.ancMode = mode
             onDeviceUpdated?(dev)
         }
         
-        // Refresh after short delay
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) {
             self.queryANCMode()
         }
     }
     
     public func setEqualizer(_ preset: EqualizerPreset) {
-        guard let channel = rfcommChannel, channel.isOpen() else { return }
-        let packet = HuaweiPacket.buildEqualizerRequest(preset: preset)
+        guard let channel = rfcommChannel, channel.isOpen() else {
+            print("[Huawei] Cannot set EQ: Channel not open")
+            return
+        }
+        print("[Huawei] Setting EQ Preset to \(preset.title) (mode \(preset.rawValue)) via CMD 2B49")
+        let packet = HuaweiPacket.buildEqualizerWriteRequest(preset: preset)
         sendData(packet)
+        
         if let dev = currentDevice {
             dev.equalizerPreset = preset
             onDeviceUpdated?(dev)
+        }
+        
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+            self.queryEqualizer()
         }
     }
     
@@ -127,14 +135,17 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     
     public func queryBattery() {
         guard let channel = rfcommChannel, channel.isOpen() else { return }
-        let packet = HuaweiPacket.buildBatteryReadRequest()
-        sendData(packet)
+        sendData(HuaweiPacket.buildBatteryReadRequest())
     }
     
     public func queryANCMode() {
         guard let channel = rfcommChannel, channel.isOpen() else { return }
-        let packet = HuaweiPacket.buildANCReadRequest()
-        sendData(packet)
+        sendData(HuaweiPacket.buildANCReadRequest())
+    }
+    
+    public func queryEqualizer() {
+        guard let channel = rfcommChannel, channel.isOpen() else { return }
+        sendData(HuaweiPacket.buildEqualizerReadRequest())
     }
     
     private func sendData(_ data: Data) {
@@ -164,6 +175,7 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             } else {
                 self.queryBattery()
                 self.queryANCMode()
+                self.queryEqualizer()
             }
         }
     }
@@ -183,10 +195,13 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 }
             }
             
-            // Query initial state
+            // Query initial state: battery, ANC mode, and EQ
             queryBattery()
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
                 self.queryANCMode()
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) {
+                self.queryEqualizer()
             }
         } else {
             print("[Huawei] RFCOMM open failed with status: \(status)")
@@ -209,7 +224,6 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     
     private func processReceiveBuffer() {
         while receiveBuffer.count >= 6 {
-            // Find start magic byte 0x5A
             guard let startIdx = receiveBuffer.firstIndex(of: HuaweiPacket.magicByte) else {
                 receiveBuffer.removeAll()
                 return
@@ -220,12 +234,9 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             guard receiveBuffer.count >= 6 else { return }
             
             let totalLength = (Int(receiveBuffer[1]) << 8) | Int(receiveBuffer[2])
-            let fullPacketLen = totalLength + 3 + 2 // magic + 2 len + body + 2 crc
+            let fullPacketLen = totalLength + 3 + 2
             
-            guard receiveBuffer.count >= fullPacketLen else {
-                // Wait for more data
-                return
-            }
+            guard receiveBuffer.count >= fullPacketLen else { return }
             
             let packetData = receiveBuffer.subdata(in: 0..<fullPacketLen)
             receiveBuffer.removeSubrange(0..<fullPacketLen)
@@ -263,6 +274,18 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
                         dev.ancMode = .awareness
                     default:
                         dev.ancMode = .off
+                    }
+                    dev.lastUpdated = Date()
+                    self.onDeviceUpdated?(dev)
+                }
+                
+            case HuaweiPacket.cmdEqualizerRead:
+                if let p2 = packet.parameters[2], p2.count >= 1 {
+                    let rawVal = Int(p2[0])
+                    if let preset = EqualizerPreset(rawValue: rawVal) {
+                        dev.equalizerPreset = preset
+                    } else if rawVal == 1 {
+                        dev.equalizerPreset = .defaultPreset
                     }
                     dev.lastUpdated = Date()
                     self.onDeviceUpdated?(dev)

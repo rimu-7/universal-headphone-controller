@@ -22,7 +22,8 @@ public struct HuaweiPacket {
     public static let cmdANCRead: UInt16 = 0x2B2A
     public static let cmdANCWrite: UInt16 = 0x2B04
     public static let cmdLowLatency: UInt16 = 0x2B6C
-    public static let cmdEqualizer: UInt16 = 0x2B4A
+    public static let cmdEqualizerRead: UInt16 = 0x2B4A
+    public static let cmdEqualizerWrite: UInt16 = 0x2B49
     
     public init(command: UInt16, parameters: [UInt8: Data] = [:]) {
         self.command = command
@@ -123,8 +124,18 @@ public struct HuaweiPacket {
         return pkt.toData()
     }
     
-    public static func buildEqualizerRequest(preset: EqualizerPreset) -> Data {
-        let pkt = HuaweiPacket(command: cmdEqualizer, parameters: [
+    public static func buildEqualizerReadRequest() -> Data {
+        let pkt = HuaweiPacket(command: cmdEqualizerRead, parameters: [
+            1: Data(),
+            2: Data(),
+            3: Data(),
+            4: Data()
+        ])
+        return pkt.toData()
+    }
+    
+    public static func buildEqualizerWriteRequest(preset: EqualizerPreset) -> Data {
+        let pkt = HuaweiPacket(command: cmdEqualizerWrite, parameters: [
             1: Data([UInt8(preset.rawValue)])
         ])
         return pkt.toData()

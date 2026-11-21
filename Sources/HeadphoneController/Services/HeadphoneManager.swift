@@ -134,8 +134,13 @@ public class HeadphoneManager: ObservableObject {
     }
     
     public func setEqualizer(for device: HeadphoneDevice, preset: EqualizerPreset) {
-        if device.brand == .huawei {
+        switch device.brand {
+        case .huawei:
             huaweiManager.setEqualizer(preset)
+        case .edifier:
+            edifierManager.setEqualizer(preset)
+        case .generic:
+            break
         }
     }
     
