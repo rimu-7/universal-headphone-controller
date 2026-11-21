@@ -8,6 +8,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Universal DMG (Apple Silicon & Intel)
@@ -39,10 +42,14 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Release Assets
+      - name: Create GitHub Release & Upload Assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: "Release ${{ github.ref_name }}"
           files: HeadphoneController.dmg
+          draft: false
+          prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
