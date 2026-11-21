@@ -17,10 +17,10 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
     public var onDeviceUpdated: ((HeadphoneDevice) -> Void)?
     public var currentDevice: HeadphoneDevice?
     
-    // Known Edifier UUID substrings
+    // Known Edifier BLE Service & Characteristic UUID substrings
     private let edifierBaseUUIDSuffix = "-1a48-11e9-ab14-d663bd873d93"
-    private let rxUUIDString = "48090002-1a48-11e9-ab14-d663bd873d93"
-    private let txUUIDString = "48090001-1a48-11e9-ab14-d663bd873d93"
+    private let rxUUIDSubstring = "48090002"
+    private let txUUIDSubstring = "48090001"
     
     private let targetKeywords = ["edifier", "fit900", "w820", "w200", "neobuds"]
     
@@ -46,28 +46,61 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
         }
     }
     
-    private func checkPairedClassicDevices() {
+    // MARK: - Native Classic Bluetooth & Battery Discovery
+    
+    public func checkPairedClassicDevices() {
         guard let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else { return }
         for dev in paired {
             let name = (dev.name ?? "").lowercased()
             if targetKeywords.contains(where: { name.contains($0) }) {
-                let devName = dev.name ?? "EDIFIER Headphone"
+                let devName = dev.name ?? "EDIFIER Fit900NB"
                 let devID = dev.addressString ?? "edifier-device"
-                if currentDevice == nil {
-                    let model = HeadphoneDevice(
-                        id: devID,
-                        name: devName,
-                        brand: .edifier,
-                        isConnected: dev.isConnected()
-                    )
-                    currentDevice = model
-                    DispatchQueue.main.async {
+                let isConnected = dev.isConnected()
+                
+                // Read native battery percentage via IOBluetoothDevice HFP
+                let nativeBattery = readNativeBatteryLevel(from: dev)
+                
+                DispatchQueue.main.async {
+                    if let existing = self.currentDevice {
+                        existing.isConnected = isConnected
+                        if let batt = nativeBattery {
+                            existing.batteryLevel = batt
+                        }
+                        existing.lastUpdated = Date()
+                        self.onDeviceUpdated?(existing)
+                    } else {
+                        let model = HeadphoneDevice(
+                            id: devID,
+                            name: devName,
+                            brand: .edifier,
+                            isConnected: isConnected,
+                            batteryLevel: nativeBattery,
+                            equalizerPreset: .defaultPreset
+                        )
+                        self.currentDevice = model
                         self.onDeviceUpdated?(model)
                     }
                 }
                 break
             }
         }
+    }
+    
+    private func readNativeBatteryLevel(from dev: IOBluetoothDevice) -> Int? {
+        typealias GetByteFunc = @convention(c) (AnyObject, Selector) -> UInt8
+        let selectors = ["batteryPercentSingle", "batteryPercentCombined", "headsetBattery", "batteryPercentLeft"]
+        for s in selectors {
+            let sel = NSSelectorFromString(s)
+            if dev.responds(to: sel) {
+                let imp = dev.method(for: sel)
+                let callable = unsafeBitCast(imp, to: GetByteFunc.self)
+                let pct = callable(dev, sel)
+                if pct > 0 && pct <= 100 {
+                    return Int(pct)
+                }
+            }
+        }
+        return nil
     }
     
     private func startScanning() {
@@ -79,10 +112,11 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
     
     private func startPollTimer() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+            self.checkPairedClassicDevices()
+            
             if self.connectedPeripheral == nil || self.connectedPeripheral?.state != .connected {
-                self.checkPairedClassicDevices()
                 self.startScanning()
             } else {
                 self.queryBattery()
@@ -160,12 +194,44 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
         sendPacket(packet)
     }
     
+    // MARK: - Multi-Transport Packet Transmission (BLE + Serial RFCOMM)
+    
     private func sendPacket(_ data: Data) {
-        guard let p = connectedPeripheral, let rx = rxCharacteristic else {
-            return
+        // Transport 1: CoreBluetooth BLE
+        if let p = connectedPeripheral, let rx = rxCharacteristic {
+            p.writeValue(data, for: rx, type: .withResponse)
+            if rx.properties.contains(.writeWithoutResponse) {
+                p.writeValue(data, for: rx, type: .withoutResponse)
+            }
         }
-        let type: CBCharacteristicWriteType = rx.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
-        p.writeValue(data, for: rx, type: type)
+        
+        // Transport 2: Classic Bluetooth Serial Port (/dev/cu.*)
+        sendViaSerialPort(data)
+    }
+    
+    private func sendViaSerialPort(_ data: Data) {
+        let fileManager = FileManager.default
+        let devDir = "/dev"
+        guard let files = try? fileManager.contentsOfDirectory(atPath: devDir) else { return }
+        
+        // Match ports like /dev/cu.EDIFIERFit900NB or /dev/cu.*Fit900* or /dev/cu.*EDIFIER*
+        let matchingPorts = files.filter { name in
+            let lower = name.lowercased()
+            return lower.hasPrefix("cu.") && (lower.contains("edifier") || lower.contains("fit900"))
+        }
+        
+        for portName in matchingPorts {
+            let fullPath = "\(devDir)/\(portName)"
+            let fd = open(fullPath, O_RDWR | O_NOCTTY | O_NONBLOCK)
+            if fd >= 0 {
+                data.withUnsafeBytes { ptr in
+                    if let base = ptr.baseAddress {
+                        _ = Darwin.write(fd, base, data.count)
+                    }
+                }
+                close(fd)
+            }
+        }
     }
     
     // MARK: - CBCentralManagerDelegate
@@ -183,21 +249,24 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
         let isMatch = targetKeywords.contains { lowerName.contains($0) }
         guard isMatch else { return }
         
-        print("[Edifier] Discovered matching peripheral: \(advName)")
+        print("[Edifier] Discovered matching peripheral: \(advName) [\(peripheral.identifier)]")
         self.connectedPeripheral = peripheral
         peripheral.delegate = self
         centralManager.stopScan()
-        centralManager.connect(peripheral, options: nil)
+        centralManager.connect(peripheral, options: [CBConnectPeripheralOptionNotifyOnDisconnectionKey: true])
         
         DispatchQueue.main.async {
             if let dev = self.currentDevice {
-                dev.name = advName
+                // Keep the real product name, e.g. "EDIFIER Fit900NB", don't overwrite with "EDIFIER BLE"
+                if !advName.lowercased().contains("ble") {
+                    dev.name = advName
+                }
                 dev.lastUpdated = Date()
                 self.onDeviceUpdated?(dev)
             } else {
                 let model = HeadphoneDevice(
                     id: peripheral.identifier.uuidString,
-                    name: advName,
+                    name: advName.lowercased().contains("ble") ? "EDIFIER Fit900NB" : advName,
                     brand: .edifier,
                     isConnected: false
                 )
@@ -219,21 +288,21 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
         peripheral.discoverServices(nil)
     }
     
+    public func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        print("[Edifier] Failed to connect: \(String(describing: error))")
+        startScanning()
+    }
+    
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         print("[Edifier] Disconnected from peripheral: \(peripheral.name ?? "")")
         rxCharacteristic = nil
         txCharacteristic = nil
         connectedPeripheral = nil
         
-        DispatchQueue.main.async {
-            if let dev = self.currentDevice {
-                dev.isConnected = false
-                dev.lastUpdated = Date()
-                self.onDeviceUpdated?(dev)
-            }
-        }
+        // Refresh classic state: do NOT force disconnected if Classic BT is still active!
+        checkPairedClassicDevices()
         
-        // Restart scan to reconnect when device turns back on
+        // Restart scan to reconnect BLE when ready
         startScanning()
     }
     
@@ -252,19 +321,20 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
             let uuid = char.uuid.uuidString.lowercased()
             
             // Check for known Edifier RX/TX or general write/notify
-            if uuid == rxUUIDString.lowercased() || (char.properties.contains(.write) || char.properties.contains(.writeWithoutResponse)) && rxCharacteristic == nil {
+            if uuid.contains(rxUUIDSubstring) || ((char.properties.contains(.write) || char.properties.contains(.writeWithoutResponse)) && rxCharacteristic == nil) {
                 rxCharacteristic = char
+                print("[Edifier] Write Characteristic registered: \(char.uuid.uuidString)")
             }
             
-            if uuid == txUUIDString.lowercased() || char.properties.contains(.notify) && txCharacteristic == nil {
+            if uuid.contains(txUUIDSubstring) || (char.properties.contains(.notify) && txCharacteristic == nil) {
                 txCharacteristic = char
                 peripheral.setNotifyValue(true, for: char)
+                print("[Edifier] Notify Characteristic registered: \(char.uuid.uuidString)")
             }
         }
         
         if rxCharacteristic != nil && txCharacteristic != nil {
-            print("[Edifier] Discovered RX and TX characteristics. Ready for commands!")
-            // Query state
+            print("[Edifier] Ready for commands! Querying initial state...")
             queryBattery()
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
                 self.queryANCMode()
@@ -343,7 +413,7 @@ public class EdifierBLEManager: NSObject, CBCentralManagerDelegate, CBPeripheral
                 }
                 
             case EdifierPacket.cmdDeviceNameGet:
-                if let name = String(data: packet.data, encoding: .utf8), !name.isEmpty {
+                if let name = String(data: packet.data, encoding: .utf8), !name.isEmpty, !name.lowercased().contains("ble") {
                     dev.name = name
                     dev.lastUpdated = Date()
                     self.onDeviceUpdated?(dev)

@@ -73,7 +73,7 @@ public struct EdifierPacket {
         return pkt.toData()
     }
     
-    public static func buildANCSetRequest(mode: ANCMode, ambientVolume: UInt8 = 0x06) -> Data {
+    public static func buildANCSetRequest(mode: ANCMode) -> Data {
         // Mode mapping:
         // 0x01: Disabled / Normal
         // 0x02: Noise Cancellation
@@ -87,7 +87,7 @@ public struct EdifierPacket {
         case .awareness:
             modeByte = 0x03
         }
-        let pkt = EdifierPacket(command: cmdANCSet, data: Data([modeByte, ambientVolume]))
+        let pkt = EdifierPacket(command: cmdANCSet, data: Data([modeByte]))
         return pkt.toData()
     }
     

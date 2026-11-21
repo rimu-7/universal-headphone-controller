@@ -88,7 +88,9 @@ public class HeadphoneManager: ObservableObject {
     
     private func handleDeviceUpdate(_ device: HeadphoneDevice) {
         DispatchQueue.main.async {
-            if let index = self.devices.firstIndex(where: { $0.id == device.id || $0.name == device.name }) {
+            if let index = self.devices.firstIndex(where: {
+                $0.id == device.id || $0.name == device.name || ($0.brand == device.brand && device.brand != .generic)
+            }) {
                 self.devices[index] = device
             } else {
                 self.devices.append(device)
@@ -102,7 +104,12 @@ public class HeadphoneManager: ObservableObject {
         let currentOut = audioController.defaultOutputDeviceName.lowercased()
         for dev in devices {
             let devLower = dev.name.lowercased()
-            let isMatch = currentOut.contains(devLower) || devLower.contains(currentOut)
+            let isMatch = !currentOut.isEmpty && (
+                currentOut.contains(devLower) ||
+                devLower.contains(currentOut) ||
+                (dev.brand == .edifier && currentOut.contains("edifier")) ||
+                (dev.brand == .huawei && (currentOut.contains("huawei") || currentOut.contains("freelace")))
+            )
             if dev.isCurrentAudioOutput != isMatch {
                 dev.isCurrentAudioOutput = isMatch
             }
