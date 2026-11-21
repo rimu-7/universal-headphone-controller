@@ -4,14 +4,16 @@ import Combine
 
 public class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
-    private var eventMonitor: Any?
+    private var panel: MenuBarPanel!
+    private var hostingView: NSHostingView<MainPopoverView>!
+    private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private let manager = HeadphoneManager.shared
     
     public func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
-        setupPopover()
+        setupPanel()
         setupBindings()
     }
     
@@ -21,18 +23,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "Headphones")
             button.imagePosition = .imageLeading
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(statusItemClicked(_:))
             button.target = self
         }
         updateStatusItem()
     }
     
-    private func setupPopover() {
-        popover = NSPopover()
-        popover.contentSize = NSSize(width: 330, height: 480)
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: MainPopoverView(manager: manager))
+    private func setupPanel() {
+        let rootView = MainPopoverView(manager: manager)
+        hostingView = NSHostingView(rootView: rootView)
+        
+        panel = MenuBarPanel(contentRect: NSRect(x: 0, y: 0, width: 330, height: 460))
+        panel.contentView = hostingView
     }
     
     private func setupBindings() {
@@ -57,42 +59,97 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    @objc private func togglePopover(_ sender: AnyObject?) {
+    @objc private func statusItemClicked(_ sender: AnyObject?) {
         guard let button = statusItem.button else { return }
         
-        if popover.isShown {
-            closePopover(sender)
+        if panel.isVisible {
+            closePanel()
         } else {
-            showPopover(button)
+            showPanel(button: button)
         }
     }
     
-    private func showPopover(_ button: NSStatusBarButton) {
+    private func showPanel(button: NSStatusBarButton) {
         manager.refreshAll()
         
-        // Ensure app is activated so popover coordinates align accurately
-        NSApp.activate(ignoringOtherApps: true)
+        guard let buttonWindow = button.window else { return }
+        let buttonScreenFrame = buttonWindow.convertToScreen(button.bounds)
+        let screen = buttonWindow.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        let visibleFrame = screen.visibleFrame
         
-        // Anchor directly to status bar button bottom edge
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Measure dynamic height from SwiftUI view
+        hostingView.layoutSubtreeIfNeeded()
+        let fitting = hostingView.fittingSize
+        let width: CGFloat = 330.0
+        let height: CGFloat = max(360.0, fitting.height)
         
-        if let window = popover.contentViewController?.view.window {
-            window.makeKey()
+        // Calculate X: Center underneath status item, safely clamped inside screen edges
+        var x = buttonScreenFrame.midX - (width / 2.0)
+        let margin: CGFloat = 10.0
+        
+        if x + width > visibleFrame.maxX - margin {
+            x = visibleFrame.maxX - width - margin
+        }
+        if x < visibleFrame.minX + margin {
+            x = visibleFrame.minX + margin
         }
         
-        // Dismiss automatically when clicking anywhere outside
-        if eventMonitor == nil {
-            eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.closePopover(nil)
+        // Calculate Y: Exactly 5 points below the menu bar bottom edge
+        let y = buttonScreenFrame.minY - height - 5.0
+        
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        
+        // Highlight menu bar button like native macOS menus
+        button.isHighlighted = true
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        
+        setupMonitors()
+    }
+    
+    private func closePanel() {
+        panel.orderOut(nil)
+        statusItem.button?.isHighlighted = false
+        removeMonitors()
+    }
+    
+    private func setupMonitors() {
+        removeMonitors()
+        
+        // Dismiss when clicking anywhere outside the panel
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self = self else { return }
+            let mouseLocation = NSEvent.mouseLocation
+            if !self.panel.frame.contains(mouseLocation) {
+                // If clicked on the status bar button itself, the button action handles toggling
+                if let button = self.statusItem.button, let window = button.window {
+                    let btnFrame = window.convertToScreen(button.bounds)
+                    if btnFrame.contains(mouseLocation) {
+                        return
+                    }
+                }
+                self.closePanel()
             }
+        }
+        
+        // Dismiss when pressing ESC
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            if event.keyCode == 53 { // ESC
+                self?.closePanel()
+                return nil
+            }
+            return event
         }
     }
     
-    private func closePopover(_ sender: AnyObject?) {
-        popover.performClose(sender)
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
+    private func removeMonitors() {
+        if let gcm = globalClickMonitor {
+            NSEvent.removeMonitor(gcm)
+            globalClickMonitor = nil
+        }
+        if let lkm = localKeyMonitor {
+            NSEvent.removeMonitor(lkm)
+            localKeyMonitor = nil
         }
     }
 }

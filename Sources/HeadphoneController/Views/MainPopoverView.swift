@@ -83,7 +83,7 @@ public struct MainPopoverView: View {
                 Spacer()
                 
                 if let active = manager.activeDevice, active.isConnected {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Circle()
                             .fill(Color.green)
                             .frame(width: 5, height: 5)
@@ -99,5 +99,11 @@ public struct MainPopoverView: View {
         }
         .padding(14)
         .frame(width: 330)
+        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow))
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
     }
 }
