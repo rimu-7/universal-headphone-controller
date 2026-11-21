@@ -1,0 +1,11 @@
+# Build and temporary files
+.build/
+.build_universal/
+.dmg_staging/
+HeadphoneController
+*.dmg
+*.app
+*.o
+*.swp
+*~
+.DS_Store

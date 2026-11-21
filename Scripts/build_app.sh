@@ -4,17 +4,33 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 cd "$DIR"
 
-echo "🔨 Compiling HeadphoneController (Release)..."
-SWIFT_FILES=$(find Sources -name "*.swift")
+echo "🔨 Compiling HeadphoneController (Universal: Apple Silicon arm64 + Intel x86_64)..."
 
-swiftc -O \
-    -framework IOBluetooth \
-    -framework CoreBluetooth \
-    -framework CoreAudio \
-    -framework AppKit \
-    -framework SwiftUI \
-    $SWIFT_FILES \
-    -o "$DIR/HeadphoneController"
+SWIFT_SOURCES=(
+    Sources/HeadphoneController/*/*.swift
+    Sources/HeadphoneController/*/*/*.swift
+)
+
+BUILD_DIR="$DIR/.build_universal"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+echo "  -> Compiling arm64 (Apple Silicon)..."
+swiftc -O -target arm64-apple-macosx13.0 \
+    -framework IOBluetooth -framework CoreBluetooth -framework CoreAudio -framework AppKit -framework SwiftUI \
+    "${SWIFT_SOURCES[@]}" \
+    -o "$BUILD_DIR/HeadphoneController_arm64"
+
+echo "  -> Compiling x86_64 (Intel)..."
+swiftc -O -target x86_64-apple-macosx13.0 \
+    -framework IOBluetooth -framework CoreBluetooth -framework CoreAudio -framework AppKit -framework SwiftUI \
+    "${SWIFT_SOURCES[@]}" \
+    -o "$BUILD_DIR/HeadphoneController_x86_64"
+
+echo "  -> Creating Universal 2 fat binary with lipo..."
+lipo -create -output "$DIR/HeadphoneController" "$BUILD_DIR/HeadphoneController_arm64" "$BUILD_DIR/HeadphoneController_x86_64"
+lipo -info "$DIR/HeadphoneController"
+rm -rf "$BUILD_DIR"
 
 APP_BUNDLE="$DIR/HeadphoneController.app"
 CONTENTS="$APP_BUNDLE/Contents"
@@ -67,4 +83,4 @@ EOF
 echo "🔏 Signing application bundle (ad-hoc)..."
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "✅ Successfully built HeadphoneController.app at: $APP_BUNDLE"
+echo "✅ Successfully built Universal HeadphoneController.app at: $APP_BUNDLE"
