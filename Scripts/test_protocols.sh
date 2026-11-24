@@ -22,6 +22,7 @@ swiftc -swift-version 5 -module-cache-path "${CLANG_MODULE_CACHE_PATH:-$PWD/.bui
     Sources/HeadphoneController/Protocols/CRC16Xmodem.swift \
     Sources/HeadphoneController/Protocols/EdifierProtocol.swift \
     Sources/HeadphoneController/Services/Bluetooth/EdifierControlSession.swift \
+    Sources/HeadphoneController/Services/Bluetooth/EdifierWriteGate.swift \
     Sources/HeadphoneController/Services/Bluetooth/BluetoothBatteryReader.swift \
     Sources/HeadphoneController/Services/Bluetooth/PairedBluetoothDeviceReader.swift \
     Tests/Support/StandaloneAssertions.swift "$TEST_DIR"/*.swift \

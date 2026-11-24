@@ -21,6 +21,8 @@ This is an independent implementation of undocumented vendor protocols. Support 
 
 Multiple Edifier devices have independent sessions. Classic and BLE rows are joined using a reported MAC address, rather than a brand-wide or name-only match. System audio routing highlights a unique matching device.
 
+Fit900NB uses one active SPP control session. Cached BLE discovery cannot overwrite that session's state or time it out. Retired transports ignore late callbacks, and RFCOMM writes retain their buffers until the matching completion. Lost control responses trigger a bounded reconnect with backoff; **Reconnect Controls** opens a fresh control channel without disconnecting Mac audio.
+
 ## Run or install
 
 Download a packaged DMG from [Releases](https://github.com/rimu-7/universal-headphone-controller/releases), open it, and drag the app to Applications. Bluetooth access must be allowed in **System Settings → Privacy & Security → Bluetooth**.
@@ -71,8 +73,8 @@ The build remains ad-hoc signed, as before; it is not Apple-notarized. Sparkle's
 
 1. Pair and connect **EDIFIER Fit900NB** in macOS Bluetooth settings.
 2. Close Edifier Connect on your phone. The headset may allow only one SPP control client at a time.
-3. Open the menu bar panel and choose **Retry Controls**. Audio can stay connected while the control channel reconnects.
-4. If controls remain unavailable, choose **Copy Diagnostics**. The report contains the detected profile, transport, services, firmware, confirmed features, timeouts and recent protocol frames.
+3. Open the menu bar panel. A working session shows **Controls ready**. If controls are unavailable, choose **Retry Controls**. Audio can stay connected while the control channel reconnects.
+4. If controls remain unavailable, use the **…** menu → **Copy Diagnostics**. The report contains the detected profile, transport, services, firmware, confirmed features, timeouts and recent protocol frames. The same menu provides **Reconnect Controls** for a fresh connection.
 
 An unknown battery is shown as `--%`; a real 0% response remains valid. When proprietary queries or Classic discovery are unavailable, an asynchronous macOS Bluetooth report supplies connected-device discovery and battery once a minute. The UI remains responsive when IOBluetooth stalls, and reports how to recover control access. Unrecognized state bytes are ignored instead of being displayed as Off or Default. Diagnostics stay in a bounded in-memory log and are copied only when requested; frame logs can contain device identifiers.
 
@@ -91,7 +93,16 @@ python3 -m unittest discover -s Tests/ReleaseTests -v
 swift test
 ```
 
-The same test methods run in both paths. Coverage includes captured frame vectors, fragmented/coalesced notifications, checksum failures, stale buffers, battery 0%, Fit900NB indexed ANC and scenes, acknowledgement/readback separation, timeouts, rejected writes, disconnect cleanup and independent sessions. CI runs these tests before packaging.
+The same test methods run in both paths. Coverage includes captured frame vectors, fragmented/coalesced notifications, checksum failures, stale buffers, battery 0%, Fit900NB indexed ANC and scenes, acknowledgement/readback separation, timeouts, rejected writes, disconnect cleanup, independent sessions, shared-model transport ownership and duplicate/late RFCOMM write completions. CI runs these tests before packaging.
+
+To diagnose a connected Edifier through the built app's Bluetooth permission context, first quit other controller copies, then run:
+
+```bash
+open -n --stdout /tmp/edifier-diagnostics.log --stderr /tmp/edifier-diagnostics.err \
+  HeadphoneController.app --args --diagnose-edifier
+```
+
+This mode performs reads only, prints state and recent frames, and exits after 25 seconds. Adding `--verify-current-settings` explicitly opts into re-applying the current Fit900NB noise mode and scene, requires both command readbacks to match, then verifies a fresh control connection can read those settings again. It does not intentionally switch modes. Use this option only while keeping the headset settings unchanged in other apps.
 
 Before uploading release artifacts, CI also verifies the DMG checksum, mounts the image read-only, checks its Applications shortcut, and copies the app out as an installation would. Both that app and the app extracted from the updater ZIP must retain valid signatures, framework symlinks, executable permissions, matching versions and both Mac architectures. Their actual executables must pass a 25-second-bounded `--self-test` that loads Sparkle and validates update configuration without accessing Bluetooth, audio, the network, or installing anything.
 

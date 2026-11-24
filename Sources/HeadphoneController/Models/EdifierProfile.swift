@@ -54,7 +54,7 @@ public enum HeadphoneControlState: String {
         case .discovering: return "Discovering headphone controls…"
         case .probing: return "Checking supported controls…"
         case .ready: return "Headphone controls ready"
-        case .unavailable: return "Controls did not respond. Close the phone app, then retry."
+        case .unavailable: return "Headphone controls did not respond. Retry controls."
         case .bluetoothOff: return "Turn on Bluetooth to use headphone controls."
         case .permissionDenied: return "Allow Bluetooth in System Settings → Privacy & Security."
         }

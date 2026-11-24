@@ -28,6 +28,10 @@ final class EdifierControlSession {
     private var lastResponse: TimeInterval = 0
     private var expected: [EdifierFeature: Data] = [:]
     private var ancPrefix: UInt8?
+    private var started = false
+    private var retired = false
+
+    var isReady: Bool { started && !retired && framing != nil && device.controlState == .ready }
 
     init(device: HeadphoneDevice) { self.device = device }
 
@@ -37,7 +41,9 @@ final class EdifierControlSession {
     }
 
     func start(now: TimeInterval) {
+        guard !retired else { return }
         reset()
+        started = true
         device.controlState = .probing
         let preferred = device.edifierProfile.preferredFraming
         // Both formats are probed with reads only. No model is inferred from a write ACK.
@@ -52,6 +58,8 @@ final class EdifierControlSession {
     }
 
     func reset() {
+        guard !retired else { return }
+        started = false
         requests.removeAll()
         inFlight = nil
         framing = nil
@@ -74,12 +82,26 @@ final class EdifierControlSession {
     }
 
     func disconnect(state: HeadphoneControlState = .disconnected) {
+        guard !retired else { return }
         reset()
         device.controlState = state
         publish()
     }
 
+    /// Detach a losing transport without resetting the model owned by the active transport.
+    func retire() {
+        retired = true
+        started = false
+        requests.removeAll()
+        inFlight = nil
+        expected.removeAll()
+        decoder = EdifierFrameDecoder()
+        onUpdate = nil
+        onIdentity = nil
+    }
+
     func tick(now: TimeInterval) {
+        guard started, !retired else { return }
         guard device.controlState == .probing || device.controlState == .ready else { return }
         if let request = inFlight, now >= deadline {
             log("Timeout \(hex(request.command))")
@@ -122,6 +144,7 @@ final class EdifierControlSession {
     }
 
     func transportFailed(_ message: String) {
+        guard !retired else { return }
         requests.removeAll()
         inFlight = nil
         device.pendingFeatures = []
@@ -133,10 +156,12 @@ final class EdifierControlSession {
     }
 
     func receive(_ data: Data, now: TimeInterval) {
+        guard started, !retired else { return }
         for packet in decoder.append(data, now: now) { receive(packet, now: now) }
     }
 
     func receive(_ packet: EdifierPacket, now: TimeInterval) {
+        guard started, !retired else { return }
         guard packet.direction != EdifierPacket.requestInit, packet.app == 0xEC || !packet.isConnex else { return }
         guard device.controlState == .probing || device.controlState == .ready else { return }
         log("RX \(packet.framing.rawValue) \(hex(packet.command)) \(packet.data.map(hex).joined(separator: " "))")
@@ -193,7 +218,7 @@ final class EdifierControlSession {
     }
 
     func refresh(includeMetadata: Bool = false) {
-        guard framing != nil else { return }
+        guard started, !retired, framing != nil else { return }
         if includeMetadata {
             for command in [UInt8(0xC8), 0xC9, 0xC6, 0xD8] { enqueue(Request(command: command)) }
         }
@@ -262,6 +287,7 @@ final class EdifierControlSession {
     }
 
     private func mutate(feature: EdifierFeature, set: UInt8, payload: Data, get: UInt8, target: Data, delay: TimeInterval = 0.4) {
+        guard isReady else { return }
         requests.removeAll { $0.feature == feature || $0.command == get }
         expected[feature] = target
         device.pendingFeatures.insert(feature)

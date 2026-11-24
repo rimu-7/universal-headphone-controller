@@ -11,6 +11,7 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
     private var retryAfter: TimeInterval = 0
     private var failureCount = 0
     private var writeBuffer: NSMutableData?
+    private var writeGate = EdifierWriteGate()
     private var writeDeadline: TimeInterval = 0
     private var enabled = true
     var isOpen: Bool { channel?.isOpen() == true }
@@ -20,13 +21,19 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
         session = EdifierControlSession(device: device)
         super.init()
         session.send = { [weak self] data in
-            guard let self, let channel = self.channel, channel.isOpen(), self.writeBuffer == nil,
-                  data.count <= Int(channel.getMTU()), data.count <= Int(UInt16.max) else { return false }
+            guard let self else { return false }
+            guard let channel = self.channel, channel.isOpen(), self.writeBuffer == nil,
+                  data.count <= Int(channel.getMTU()), data.count <= Int(UInt16.max) else {
+                self.session.log("SPP writer not ready: open=\(self.isOpen), pending=\(self.writeBuffer != nil), mtu=\(self.channel?.getMTU() ?? 0), bytes=\(data.count)")
+                return false
+            }
+            guard let token = self.writeGate.begin() else { return false }
             let buffer = NSMutableData(data: data)
             self.writeBuffer = buffer // The async API requires bytes to live through write completion.
             self.writeDeadline = ProcessInfo.processInfo.systemUptime + 3
-            let result = channel.writeAsync(buffer.mutableBytes, length: UInt16(buffer.length), refcon: nil)
-            if result != kIOReturnSuccess { self.writeBuffer = nil }
+            let result = channel.writeAsync(buffer.mutableBytes, length: UInt16(buffer.length), refcon: UnsafeMutableRawPointer(bitPattern: token))
+            self.session.log("SPP writeAsync returned \(result) (\(data.count) bytes)")
+            if result != kIOReturnSuccess { self.writeBuffer = nil; self.writeGate.cancel() }
             return result == kIOReturnSuccess
         }
     }
@@ -37,18 +44,24 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
             if isOpen || connecting { close() }
             return
         }
-        if connecting, now > deadline { failed("SPP connection timed out. Close Edifier Connect on your phone, then retry.") }
+        if connecting, now > deadline { failed("Headphone control connection timed out. Reconnecting…") }
         if writeBuffer != nil, now > writeDeadline { failed("SPP write timed out. Retry headphone controls.") }
         if !isOpen, !connecting, now >= retryAfter { connect(now: now) }
         session.tick(now: now)
+        if session.isReady { failureCount = 0 }
+        if isOpen, session.device.controlState == .unavailable {
+            failed("Headphone controls stopped responding. Reconnecting…")
+        }
     }
 
     func retry() {
         enabled = true
         failureCount = 0
-        retryAfter = 0
-        if isOpen { session.start(now: ProcessInfo.processInfo.systemUptime) }
-        else { connect(now: ProcessInfo.processInfo.systemUptime) }
+        close()
+        // Let macOS and the headset finish closing the old channel before reopening its DLC.
+        retryAfter = ProcessInfo.processInfo.systemUptime + 1
+        session.device.controlState = .connecting
+        session.onUpdate?(session.device)
     }
 
     func stop() { enabled = false; close() }
@@ -58,6 +71,7 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
         connecting = true
         deadline = now + 12
         session.device.controlState = .connecting
+        session.device.controlError = nil
         session.onUpdate?(session.device)
         if let channelID = serviceChannel() { open(channelID); return }
         session.log("Discover Fit900NB SPP service EDF00000-EDFE-DFED-FEDF-EDFEDFEDFEDF")
@@ -102,6 +116,7 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
         previous?.setDelegate(nil)
         previous?.close()
         writeBuffer = nil
+        writeGate.cancel()
         session.disconnect()
     }
 
@@ -117,7 +132,6 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
             guard let self, self.enabled, rfcommChannel === self.channel else { return }
             self.connecting = false
             if error == kIOReturnSuccess {
-                self.failureCount = 0
                 self.session.device.isConnected = true
                 self.session.log("SPP channel open")
                 self.session.start(now: ProcessInfo.processInfo.systemUptime)
@@ -135,8 +149,17 @@ final class EdifierRFCOMMConnection: NSObject, IOBluetoothRFCOMMChannelDelegate 
     }
 
     func rfcommChannelWriteComplete(_ rfcommChannel: IOBluetoothRFCOMMChannel!, refcon: UnsafeMutableRawPointer!, status error: IOReturn) {
+        writeCompleted(rfcommChannel, token: UInt(bitPattern: refcon), status: error)
+    }
+
+    func rfcommChannelWriteComplete(_ rfcommChannel: IOBluetoothRFCOMMChannel!, refcon: UnsafeMutableRawPointer!, status error: IOReturn, bytesWritten length: Int) {
+        writeCompleted(rfcommChannel, token: UInt(bitPattern: refcon), status: error)
+    }
+
+    private func writeCompleted(_ rfcommChannel: IOBluetoothRFCOMMChannel?, token: UInt, status error: IOReturn) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, rfcommChannel === self.channel else { return }
+            guard let self, rfcommChannel === self.channel, self.writeGate.finish(token) else { return }
+            self.session.log("SPP write completion: \(error)")
             self.writeBuffer = nil
             if error != kIOReturnSuccess { self.failed("SPP write failed (\(error)). Retry headphone controls.") }
         }

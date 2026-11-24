@@ -299,4 +299,50 @@ final class EdifierControlSessionTests: XCTestCase {
         XCTAssertTrue(device.pendingFeatures.contains(.noiseControl))
     }
 
+    func testIdleBLESessionCannotInvalidateSPPProbeOnSharedDevice() {
+        let shared = device()
+        let activeSPP = EdifierControlSession(device: shared)
+        let idleBLE = EdifierControlSession(device: shared)
+        activeSPP.send = { _ in true }
+        activeSPP.start(now: 0)
+        activeSPP.tick(now: 0)
+        idleBLE.tick(now: 0)
+        XCTAssertEqual(shared.controlState, .probing)
+        activeSPP.receive(packet(0xD8, [1, 2, 3]), now: 0.1)
+        XCTAssertTrue(activeSPP.isReady)
+        XCTAssertFalse(idleBLE.isReady)
+        idleBLE.tick(now: 1)
+        XCTAssertEqual(shared.controlState, .ready)
+    }
+
+    func testRetiredTransportCallbacksCannotResetActiveDeviceState() {
+        let shared = device()
+        let (activeSPP, now) = readySession(shared)
+        let retiredBLE = EdifierControlSession(device: shared)
+        retiredBLE.retire()
+        retiredBLE.start(now: now)
+        retiredBLE.tick(now: now + 1)
+        retiredBLE.receive(packet(0xD0, [0]), now: now + 1)
+        retiredBLE.transportFailed("Late BLE timeout")
+        retiredBLE.disconnect()
+        retiredBLE.setScene(.game)
+        retiredBLE.setANC(.off, level: nil)
+        XCTAssertEqual(shared.controlState, .ready)
+        XCTAssertEqual(shared.batteryLevel, 50)
+        XCTAssertTrue(shared.hasANCState)
+        XCTAssertTrue(activeSPP.isReady)
+        XCTAssertFalse(retiredBLE.isReady)
+        XCTAssertNil(shared.controlError)
+        XCTAssertTrue(shared.pendingFeatures.isEmpty)
+    }
+
+    func testUnstartedTransportCannotApplyAnotherConnectionsNotifications() {
+        let shared = device()
+        let (_, now) = readySession(shared)
+        let unstarted = EdifierControlSession(device: shared)
+        unstarted.receive(packet(0xD0, [0]), now: now)
+        XCTAssertEqual(shared.batteryLevel, 50)
+        XCTAssertEqual(shared.controlState, .ready)
+    }
+
 }

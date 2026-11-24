@@ -3,6 +3,9 @@ import Cocoa
 if CommandLine.arguments.contains("--self-test") {
     exit(AppSelfTest.run())
 }
+if CommandLine.arguments.contains("--diagnose-edifier") {
+    EdifierDiagnostics.run()
+}
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

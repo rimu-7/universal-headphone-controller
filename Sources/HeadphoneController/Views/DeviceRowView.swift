@@ -20,7 +20,7 @@ public struct DeviceRowView: View {
                         .font(.system(size: 13, weight: .bold))
                         .lineLimit(1)
                         .help(device.name)
-                    Text(device.isCurrentAudioOutput ? "Mac Audio Output" : (device.isConnected ? "Connected" : "Disconnected"))
+                    Text(device.isCurrentAudioOutput ? (device.brand == .edifier ? "Mac audio connected" : "Mac Audio Output") : (device.isConnected ? "Connected" : "Disconnected"))
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -34,7 +34,7 @@ public struct DeviceRowView: View {
                         if [.connecting, .discovering, .probing, .searching].contains(device.controlState) {
                             ProgressView().controlSize(.mini)
                         }
-                        Text(device.controlState.message)
+                        Text(controlStatusMessage)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -46,7 +46,7 @@ public struct DeviceRowView: View {
                         .foregroundColor(.secondary)
                         .accessibilityLabel("Setting change pending. Waiting for headset confirmation.")
                 }
-                if let error = device.controlError {
+                if device.controlState == .ready, let error = device.controlError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11))
                         .foregroundColor(.primary)
@@ -113,30 +113,48 @@ public struct DeviceRowView: View {
                 .accessibilityLabel("Music, Game or Spatial sound")
             }
 
-            HStack(spacing: 8) {
-                if device.brand == .huawei || (device.supportedFeatures.contains(.gameMode) && !device.supportedFeatures.contains(.sceneMode)) {
-                    let enabled = device.gameModeEnabled ?? false
-                    Button {
-                        manager.setGameMode(for: device, enabled: !enabled)
-                    } label: {
-                        Label(enabled ? "Gaming: On" : "Game Mode", systemImage: "gamecontroller")
+            if device.brand == .huawei ||
+                (device.supportedFeatures.contains(.gameMode) && !device.supportedFeatures.contains(.sceneMode)) ||
+                (!device.isCurrentAudioOutput && device.isConnected) {
+                HStack(spacing: 8) {
+                    if device.brand == .huawei || (device.supportedFeatures.contains(.gameMode) && !device.supportedFeatures.contains(.sceneMode)) {
+                        let enabled = device.gameModeEnabled ?? false
+                        Button {
+                            manager.setGameMode(for: device, enabled: !enabled)
+                        } label: {
+                            Label(enabled ? "Gaming: On" : "Game Mode", systemImage: "gamecontroller")
+                        }
+                        .disabled(!device.canControl(.gameMode))
                     }
-                    .disabled(!device.canControl(.gameMode))
+                    Spacer()
+                    if !device.isCurrentAudioOutput && device.isConnected {
+                        Button("Set as Output") { manager.routeAudioTo(device: device) }
+                    }
                 }
-                Spacer()
-                if !device.isCurrentAudioOutput && device.isConnected {
-                    Button("Set as Output") { manager.routeAudioTo(device: device) }
-                }
+                .controlSize(.small)
             }
-            .controlSize(.small)
 
             if device.brand == .edifier {
                 HStack {
-                    Button("Retry Controls") { manager.retryControls(for: device) }
-                        .disabled([.connecting, .discovering, .probing].contains(device.controlState))
+                    if device.controlState == .ready {
+                        Label("Controls ready", systemImage: "checkmark.circle")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Button("Retry Controls") { manager.retryControls(for: device) }
+                            .disabled([.connecting, .discovering, .probing, .bluetoothOff, .permissionDenied].contains(device.controlState))
+                    }
                     Spacer()
-                    Button("Copy Diagnostics") { manager.copyDiagnostics(for: device) }
-                        .help("Copy model, services and recent protocol responses for troubleshooting")
+                    Menu {
+                        Button("Reconnect Controls") { manager.retryControls(for: device) }
+                            .disabled([.connecting, .discovering, .probing, .bluetoothOff, .permissionDenied].contains(device.controlState))
+                        Button("Copy Diagnostics") { manager.copyDiagnostics(for: device) }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .accessibilityLabel("Headphone options")
                 }
                 .controlSize(.small)
             }
@@ -146,6 +164,14 @@ public struct DeviceRowView: View {
         .cornerRadius(12)
         .overlay(RoundedRectangle(cornerRadius: 12)
             .stroke(device.isConnected ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.15), lineWidth: 1))
+    }
+
+    private var controlStatusMessage: String {
+        let message = device.controlError ?? device.controlState.message
+        if device.controlState == .unavailable && device.isCurrentAudioOutput {
+            return "Mac audio is connected. \(message)"
+        }
+        return message
     }
 
     private var ambientAction: ((UInt8) -> Void)? {

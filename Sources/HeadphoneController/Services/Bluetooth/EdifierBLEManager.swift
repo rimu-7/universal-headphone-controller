@@ -108,8 +108,8 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
     }
 
     private func session(for id: String) -> EdifierControlSession? {
-        if let session = classicConnections[id]?.session, session.device.controlState == .ready { return session }
-        return connections.values.first { $0.session.device.id == id && $0.session.device.controlState == .ready }?.session
+        if let session = classicConnections[id]?.session, session.isReady { return session }
+        return connections.values.first { $0.session.device.id == id && $0.session.isReady }?.session
     }
 
     private func tick() {
@@ -171,6 +171,7 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
             devices[id] = device
             device.name = record.name
             if device.edifierProfile == .unknown { device.edifierProfile = EdifierProfile.resolve(name: record.name) }
+            if device.edifierProfile == .fit900NB { retireBLEConnections(for: id) }
             if let battery = record.battery, !device.batteryIsFromControl || device.controlState != .ready {
                 device.batteryLevel = battery
             }
@@ -195,6 +196,7 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
             devices[id] = device
             device.name = name
             if device.edifierProfile == .unknown { device.edifierProfile = EdifierProfile.resolve(name: name) }
+            if device.edifierProfile == .fit900NB { retireBLEConnections(for: id) }
             if device.edifierProfile == .fit900NB, classicConnections[id] == nil {
                 let connection = EdifierRFCOMMConnection(native: native, device: device)
                 connection.session.onUpdate = { [weak self] device in self?.onDeviceUpdated?(device) }
@@ -224,6 +226,17 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
         }
     }
 
+    private func retireBLEConnections(for id: String) {
+        let losing = connections.filter { $0.value.session.device.id == id || identities[$0.key.uuidString] == id }
+        for (identifier, connection) in losing {
+            connections.removeValue(forKey: identifier)
+            connection.session.retire()
+            connection.clear()
+            connection.peripheral.delegate = nil
+            central.cancelPeripheralConnection(connection.peripheral)
+        }
+    }
+
     private func discover() {
         guard running, central.state == .poweredOn else { return }
         // macOS-held peripherals often no longer advertise. Scanning alone misses them.
@@ -242,7 +255,9 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
         let now = ProcessInfo.processInfo.systemUptime
         guard peripheral.state != .disconnecting else { return }
         let knownID = identities[peripheral.identifier.uuidString]
-        if EdifierProfile.resolve(name: peripheral.name ?? "") == .fit900NB || knownID.flatMap({ classicConnections[$0] }) != nil { return }
+        if EdifierProfile.resolve(name: peripheral.name ?? "") == .fit900NB ||
+            knownID.flatMap({ devices[$0]?.edifierProfile }) == .fit900NB ||
+            knownID.flatMap({ classicConnections[$0] }) != nil { return }
         guard now >= (retryAfter[peripheral.identifier] ?? 0) else { return }
         if let existing = connections[peripheral.identifier], existing.connectStarted != nil || existing.isActive { return }
         // Keep sessions independent; a nearby Edifier must never replace another device's model.
@@ -282,9 +297,7 @@ public final class EdifierBLEManager: NSObject, CBCentralManagerDelegate {
         UserDefaults.standard.set(identities, forKey: "edifier.verifiedIdentities")
         if classicConnections[id] != nil, old.id != id {
             // Prefer Fit900NB's SPP channel; never let a second transport reset its confirmed state.
-            connection.session.onUpdate = nil
-            connection.session.onIdentity = nil
-            connection.session.disconnect()
+            connection.session.retire()
             connections.removeValue(forKey: connection.peripheral.identifier)
             devices.removeValue(forKey: old.id)
             central.cancelPeripheralConnection(connection.peripheral)
