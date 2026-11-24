@@ -2,10 +2,15 @@
 .build/
 .build_universal/
 .dmg_staging/
-HeadphoneController
+/HeadphoneController
 *.dmg
 *.app
 *.o
+*.zip
+*.key
+/release-assets/
+__pycache__/
+*.pyc
 *.swp
 *~
 .DS_Store

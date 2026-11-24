@@ -14,6 +14,24 @@ public class HeadphoneDevice: ObservableObject, Identifiable {
     @Published public var equalizerPreset: EqualizerPreset?
     @Published public var isCurrentAudioOutput: Bool
     @Published public var lastUpdated: Date
+    @Published public var controlState: HeadphoneControlState = .disconnected
+    @Published public var supportedFeatures: Set<EdifierFeature> = []
+    @Published public var pendingFeatures: Set<EdifierFeature> = []
+    @Published public var hasANCState = false
+    @Published public var controlError: String?
+    @Published public var firmwareVersion: String?
+    @Published public var edifierProfile: EdifierProfile = .unknown
+    @Published public var edifierANCIndex: UInt8?
+    @Published public var edifierNoiseValue: UInt8?
+    @Published public var edifierScene: EdifierScene?
+    var batteryIsFromControl = false
+    // Updated only by confirmed readback, retained when the control view is recreated.
+    var edifierCancellationSelection: (index: UInt8, value: UInt8)?
+
+    public func canControl(_ feature: EdifierFeature) -> Bool {
+        if brand == .huawei { return isConnected }
+        return controlState == .ready && supportedFeatures.contains(feature) && !pendingFeatures.contains(feature)
+    }
     
     public init(
         id: String,

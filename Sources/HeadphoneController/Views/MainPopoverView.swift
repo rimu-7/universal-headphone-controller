@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct MainPopoverView: View {
     @ObservedObject public var manager: HeadphoneManager
+    var beforeCheckingForUpdates: () -> Void = {}
     
     public init(manager: HeadphoneManager = .shared) {
         self.manager = manager
@@ -55,24 +56,30 @@ public struct MainPopoverView: View {
                     Text("Scanning for paired headphones...")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                    Text("Supports Huawei FreeLace Pro & Edifier Fit900NB")
+                    Text("Pair your Huawei or Edifier headphones in Bluetooth settings.")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.8))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             } else {
-                VStack(spacing: 12) {
-                    ForEach(manager.devices) { device in
-                        DeviceRowView(device: device, manager: manager)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(manager.devices) { device in
+                            DeviceRowView(device: device, manager: manager)
+                        }
                     }
+                    .padding(1)
                 }
+                .frame(maxHeight: min(440, (NSScreen.main?.visibleFrame.height ?? 800) - 220))
             }
             
             Divider()
             
             // Mac System Volume
             VolumeControlView(audioController: manager.audioController)
+
+            UpdateControlsView(updater: .shared, beforeChecking: beforeCheckingForUpdates)
             
             // Footer
             HStack {

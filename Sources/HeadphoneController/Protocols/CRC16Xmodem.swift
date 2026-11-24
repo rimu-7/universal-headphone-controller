@@ -36,7 +36,7 @@ public enum ChecksumUtility {
         0xef1f, 0xff3e, 0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8,
         0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0
     ]
-    
+
     public static func crc16Xmodem(_ data: Data) -> UInt16 {
         var s: UInt16 = 0
         for byte in data {
@@ -45,7 +45,7 @@ public enum ChecksumUtility {
         }
         return s
     }
-    
+
     /// Edifier packet checksum: sum of payload bytes + 0x2019
     public static func edifierChecksum(_ data: Data) -> UInt16 {
         var sum: UInt32 = 0x2019
@@ -53,5 +53,14 @@ public enum ChecksumUtility {
             sum += UInt32(byte)
         }
         return UInt16(sum & 0xFFFF)
+    }
+
+    /// Edifier ConneX checksum: 8-bit sum of all preceding bytes modulo 256
+    public static func connexChecksum(_ data: Data) -> UInt8 {
+        var sum: Int = 0
+        for byte in data {
+            sum = (sum + Int(byte)) & 0xFF
+        }
+        return UInt8(sum)
     }
 }

@@ -1,4 +1,4 @@
-// swift-tools-version: 6.4
+// swift-tools-version: 5.9
 import PackageDescription
 
 let package = Package(
@@ -15,6 +15,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "HeadphoneController",
+            dependencies: ["Sparkle"],
             path: "Sources/HeadphoneController",
             linkerSettings: [
                 .linkedFramework("IOBluetooth"),
@@ -23,6 +24,16 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI")
             ]
+        ),
+        .binaryTarget(
+            name: "Sparkle",
+            url: "https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-for-Swift-Package-Manager.zip",
+            checksum: "4c2e48a3e50ebcc2c88a58a4c7264a1a99c3c31857ce754357afb9cdb323022a"
+        ),
+        .testTarget(
+            name: "HeadphoneControllerTests",
+            dependencies: ["HeadphoneController"],
+            path: "Tests/HeadphoneControllerTests"
         )
     ]
 )

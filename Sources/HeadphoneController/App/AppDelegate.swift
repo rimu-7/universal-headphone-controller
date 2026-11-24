@@ -15,6 +15,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupPanel()
         setupBindings()
+        AppUpdater.shared.start()
     }
     
     private func setupStatusItem() {
@@ -30,7 +31,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupPanel() {
-        let rootView = MainPopoverView(manager: manager)
+        var rootView = MainPopoverView(manager: manager)
+        rootView.beforeCheckingForUpdates = { [weak self] in self?.closePanel() }
         hostingView = NSHostingView(rootView: rootView)
         
         panel = MenuBarPanel(contentRect: NSRect(x: 0, y: 0, width: 330, height: 460))
@@ -81,7 +83,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         hostingView.layoutSubtreeIfNeeded()
         let fitting = hostingView.fittingSize
         let width: CGFloat = 330.0
-        let height: CGFloat = max(360.0, fitting.height)
+        let height: CGFloat = min(max(360.0, fitting.height), visibleFrame.height - 20)
         
         // Calculate X: Center underneath status item, safely clamped inside screen edges
         var x = buttonScreenFrame.midX - (width / 2.0)
@@ -95,7 +97,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         // Calculate Y: Exactly 5 points below the menu bar bottom edge
-        let y = buttonScreenFrame.minY - height - 5.0
+        let y = max(visibleFrame.minY + 10, buttonScreenFrame.minY - height - 5.0)
         
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
         

@@ -10,6 +10,8 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var isConnecting = false
     private var pollTimer: Timer?
     private var receiveBuffer = Data()
+    private var pairedScanInProgress = false
+    private var running = false
     
     public var onDeviceUpdated: ((HeadphoneDevice) -> Void)?
     public var currentDevice: HeadphoneDevice?
@@ -21,11 +23,13 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
     
     public func start() {
+        running = true
         scanAndConnect()
         startPollTimer()
     }
     
     public func stop() {
+        running = false
         pollTimer?.invalidate()
         pollTimer = nil
         closeChannel()
@@ -35,10 +39,17 @@ public class HuaweiRFCOMMManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         guard rfcommChannel == nil || !rfcommChannel!.isOpen() else { return }
         guard !isConnecting else { return }
         
-        guard let pairedDevices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
-            return
+        guard !pairedScanInProgress else { return }
+        pairedScanInProgress = true
+        PairedBluetoothDeviceReader.fetch { [weak self] pairedDevices in
+            guard let self else { return }
+            self.pairedScanInProgress = false
+            guard self.running, !self.isConnecting, self.rfcommChannel?.isOpen() != true else { return }
+            self.connectPairedDevice(pairedDevices)
         }
-        
+    }
+
+    private func connectPairedDevice(_ pairedDevices: [IOBluetoothDevice]) {
         let huaweiDevice = pairedDevices.first { device in
             let name = (device.name ?? "").lowercased()
             return targetKeywords.contains { name.contains($0) }

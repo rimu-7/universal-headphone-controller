@@ -2,54 +2,113 @@ name: Build Universal macOS DMG
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ "v*" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+# Publish main builds in order so an older run cannot replace the latest update feed.
+concurrency:
+  group: headphone-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    name: Build Universal DMG (Apple Silicon & Intel)
+    name: Test and build Universal DMG
     runs-on: macos-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Show Swift & Xcode Version
+      - uses: actions/checkout@v4
+      - name: Cache pinned Sparkle distribution
+        uses: actions/cache@v4
+        with:
+          path: .build/sparkle-2.10.1
+          key: sparkle-2.10.1-${{ runner.os }}
+      - name: Run protocol and release validation tests
         run: |
-          swift --version
-          xcodebuild -version || true
-
-      - name: Build Universal App & DMG
+          ./Scripts/test_protocols.sh
+          python3 -m unittest discover -s Tests/ReleaseTests -v
+      - name: Build versioned app and DMG
+        env:
+          APP_BUILD_VERSION: ${{ github.run_number }}.${{ github.run_attempt }}
         run: |
-          chmod +x Scripts/build_app.sh Scripts/build_dmg.sh
           ./Scripts/build_dmg.sh
-
-      - name: Verify Universal Binary
+          ./Scripts/package_update.sh
+      - name: Verify app and universal binary
         run: |
-          lipo -info HeadphoneController.app/Contents/MacOS/HeadphoneController
-
-      - name: Upload DMG Artifact
+          codesign --verify --deep --strict HeadphoneController.app
+          lipo -verify_arch arm64 x86_64 HeadphoneController.app/Contents/MacOS/HeadphoneController
+          plutil -lint HeadphoneController.app/Contents/Info.plist
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: HeadphoneController-Universal-macOS
-          path: HeadphoneController.dmg
+          path: release-assets/
           if-no-files-found: error
           retention-days: 90
 
-      - name: Create GitHub Release & Upload Assets
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Sign and publish app update
+    needs: build
+    if: github.repository == 'rimu-7/universal-headphone-controller' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download tested build
+        uses: actions/download-artifact@v4
         with:
-          name: "Release ${{ github.ref_name }}"
-          files: HeadphoneController.dmg
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+          name: HeadphoneController-Universal-macOS
+          path: release-assets
+      - name: Cache pinned Sparkle distribution
+        uses: actions/cache@v4
+        with:
+          path: .build/sparkle-2.10.1
+          key: sparkle-2.10.1-${{ runner.os }}
+      - name: Read artifact version
+        id: version
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          metadata = json.loads(Path('release-assets/build-info.json').read_text())
+          assert re.fullmatch(r'\d+\.\d+\.\d+', metadata['version'])
+          assert re.fullmatch(r'\d+(?:\.\d+){0,2}', metadata['build'])
+          assert metadata['sha'] == os.environ['GITHUB_SHA']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"tag=v{metadata['version']}-build.{metadata['build']}\n")
+              output.write(f"title=Headphone Controller {metadata['version']} (build {metadata['build']})\n")
+          PY
+      - name: Sign archive and feed
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          UPDATE_DOWNLOAD_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY" || { echo 'SPARKLE_PRIVATE_KEY repository secret is required'; exit 1; }
+          umask 077
+          SPARKLE_KEY_FILE="$(mktemp "$RUNNER_TEMP/sparkle-signing.XXXXXX")"
+          export SPARKLE_KEY_FILE
+          trap 'rm -f "$SPARKLE_KEY_FILE"' EXIT
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$SPARKLE_KEY_FILE"
+          unset SPARKLE_PRIVATE_KEY
+          git log -1 --format='%s%n%n%b' > "$RUNNER_TEMP/update-notes.txt"
+          export UPDATE_RELEASE_NOTES_FILE="$RUNNER_TEMP/update-notes.txt"
+          ./Scripts/sign_update_feed.sh
+      - name: Publish complete release
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.version.outputs.title }}
+        run: ./Scripts/publish_release.sh
+      - name: Upload signed release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeadphoneController-signed-update-feed
+          path: |
+            release-assets/appcast.xml
+            release-assets/SHA256SUMS
