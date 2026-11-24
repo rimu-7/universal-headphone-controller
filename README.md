@@ -93,6 +93,15 @@ swift test
 
 The same test methods run in both paths. Coverage includes captured frame vectors, fragmented/coalesced notifications, checksum failures, stale buffers, battery 0%, Fit900NB indexed ANC and scenes, acknowledgement/readback separation, timeouts, rejected writes, disconnect cleanup and independent sessions. CI runs these tests before packaging.
 
+Before uploading release artifacts, CI also verifies the DMG checksum, mounts the image read-only, checks its Applications shortcut, and copies the app out as an installation would. Both that app and the app extracted from the updater ZIP must retain valid signatures, framework symlinks, executable permissions, matching versions and both Mac architectures. Their actual executables must pass a 25-second-bounded `--self-test` that loads Sparkle and validates update configuration without accessing Bluetooth, audio, the network, or installing anything.
+
+To repeat the package checks locally after building a DMG:
+
+```bash
+./Scripts/package_update.sh
+python3 Scripts/verify_artifacts.py release-assets
+```
+
 Implementation boundaries:
 
 - `AppUpdater`: Sparkle settings and native update UI, independent of Bluetooth.

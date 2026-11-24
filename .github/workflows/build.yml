@@ -41,6 +41,8 @@ jobs:
           codesign --verify --deep --strict HeadphoneController.app
           lipo -archs HeadphoneController.app/Contents/MacOS/HeadphoneController | python3 -c 'import sys; architectures=set(sys.stdin.read().split()); assert {"arm64", "x86_64"} <= architectures, architectures'
           plutil -lint HeadphoneController.app/Contents/Info.plist
+      - name: Mount and smoke-test packaged DMG and updater ZIP
+        run: python3 Scripts/verify_artifacts.py release-assets
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
