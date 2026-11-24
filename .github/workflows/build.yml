@@ -39,7 +39,7 @@ jobs:
       - name: Verify app and universal binary
         run: |
           codesign --verify --deep --strict HeadphoneController.app
-          lipo -verify_arch arm64 x86_64 HeadphoneController.app/Contents/MacOS/HeadphoneController
+          lipo HeadphoneController.app/Contents/MacOS/HeadphoneController -verify_arch arm64 x86_64
           plutil -lint HeadphoneController.app/Contents/Info.plist
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
