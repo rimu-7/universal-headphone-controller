@@ -61,6 +61,8 @@ Push an ordinary commit to `main`; no manual version tag or DMG packaging is nee
 
 Releases contain **HeadphoneController.dmg** for manual installation, **HeadphoneController-update.zip** for Sparkle, **appcast.xml**, and **SHA256SUMS**. Pull requests build artifacts but cannot publish or access the signing secret. Failed builds leave the previous update available. Rerunning a release job resumes its draft without overwriting a published build.
 
+If a newer commit reaches `main` during a build, the superseded build skips publication and leaves that newer build to publish. This prevents an outdated commit from replacing the latest feed or requiring extra workflow-write permissions.
+
 The product version is in `VERSION`. Release tags look like `v1.1.0-build.12.1`; the final numbers distinguish repeated development updates even when the product version is unchanged. Local builds use build `0`, so they can find the published CI build. The workflow can also be run manually from GitHub's Actions page on `main`.
 
 The build remains ad-hoc signed, as before; it is not Apple-notarized. Sparkle's separate Ed25519 signatures authenticate app updates. Keep the existing signing key when making future changes so already installed copies continue to trust new releases.
